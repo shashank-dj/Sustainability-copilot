@@ -17,7 +17,7 @@ st.set_page_config(
 )
 
 st.title("🏎️🌱 ESG F1 Copilot")
-st.caption("Corporate ESG reasoning using Formula 1 sustainability data")
+st.caption("Fast, zero-cost ESG reasoning using Formula 1 sustainability data")
 
 # ===============================
 # PATH CONFIGURATION
@@ -36,7 +36,7 @@ for file in os.listdir(DATA_DIR):
             documents.append(f.read())
 
 # ===============================
-# TF-IDF VECTOR STORE
+# TF-IDF VECTOR STORE (FAST)
 # ===============================
 vectorizer = TfidfVectorizer(stop_words="english")
 doc_vectors = vectorizer.fit_transform(documents)
@@ -48,13 +48,17 @@ def retrieve_context(query, k=2):
     return "\n".join([documents[i] for i in top_indices])
 
 # ===============================
-# LOAD LLM (STABLE)
+# LOAD LLM (CACHED & FAST)
 # ===============================
-llm = pipeline(
-    "text2text-generation",
-    model="google/flan-t5-base",
-    max_length=256
-)
+@st.cache_resource
+def load_llm():
+    return pipeline(
+        "text2text-generation",
+        model="google/flan-t5-small",  # 🚀 faster than base
+        max_length=128                 # 🚀 shorter output
+    )
+
+llm = load_llm()
 
 # ===============================
 # LOAD AVAILABLE RACES
@@ -160,11 +164,10 @@ ax.bar(score_df["Driver"], score_df["SustainabilityScore"])
 ax.set_title("Sustainability Score Comparison")
 ax.set_ylabel("Score")
 ax.grid(axis="y", linestyle="--")
-
 st.pyplot(fig)
 
 # ===============================
-# BUILD RACE SUMMARY FOR LLM
+# RACE SUMMARY (USED CONDITIONALLY)
 # ===============================
 race_summary = f"""
 Race: {selected_race_name}
@@ -180,7 +183,7 @@ and fewer operational interventions.
 """
 
 # ===============================
-# ESG CHATBOT (FIXED PROMPT)
+# ESG CHATBOT (FAST PROMPT)
 # ===============================
 st.subheader("💬 Ask the ESG Copilot")
 
@@ -194,19 +197,23 @@ user_question = st.chat_input(
 if user_question:
     esg_context = retrieve_context(user_question)
 
+    # 👉 Include race context only if relevant
+    race_keywords = ["race", "driver", "stint", "tyre", "lap", "pit", "score"]
+    include_race = any(k in user_question.lower() for k in race_keywords)
+
+    context_block = race_summary if include_race else ""
+
     prompt = f"""
 You are a corporate ESG sustainability assistant.
 Explain concepts clearly and practically for business users.
 
-Use the information below to answer the question.
-Do not use numbering or bullet points unless necessary.
-If the question is simple, give a simple explanation.
+Use the provided information to answer the question.
+Avoid numbering unless necessary. Keep answers concise.
 
 ESG Knowledge:
 {esg_context}
 
-Race Context:
-{race_summary}
+{context_block}
 
 Question:
 {user_question}
@@ -214,7 +221,8 @@ Question:
 Answer:
 """
 
-    response = llm(prompt)[0]["generated_text"].strip()
+    with st.spinner("Thinking..."):
+        response = llm(prompt)[0]["generated_text"].strip()
 
     st.session_state.chat_history.append(("user", user_question))
     st.session_state.chat_history.append(("assistant", response))
