@@ -38,23 +38,6 @@ The project uses **Formula 1 race telemetry** as a **high-performance case study
 
 ---
 
-## 🏗️ System Architecture
-
-User Question
-↓
-TF-IDF Retrieval (ESG Knowledge)
-↓
-Optional Race Summary Context
-↓
-Lightweight Open-Source LLM
-↓
-Business-Focused ESG Explanation
-
-
-This follows a **Retrieval-Augmented Generation (RAG)** pattern, optimized for free infrastructure.
-
----
-
 ## 🛠️ Tech Stack
 
 | Layer | Technology |
