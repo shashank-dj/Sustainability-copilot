@@ -2,11 +2,22 @@ import streamlit as st
 import pandas as pd
 import matplotlib.pyplot as plt
 import os
-import faiss
 import numpy as np
 
-from sentence_transformers import SentenceTransformer
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.metrics.pairwise import cosine_similarity
 from transformers import pipeline
+
+# ===============================
+# APP CONFIG
+# ===============================
+st.set_page_config(
+    page_title="ESG F1 Copilot",
+    layout="wide"
+)
+
+st.title("🏎️🌱 ESG F1 Copilot")
+st.caption("Corporate ESG reasoning using Formula 1 sustainability data")
 
 # ===============================
 # PATH CONFIGURATION
@@ -18,27 +29,28 @@ DATA_DIR = "data"
 # LOAD ESG KNOWLEDGE FILES
 # ===============================
 documents = []
+doc_names = []
+
 for file in os.listdir(DATA_DIR):
     if file.endswith(".txt"):
         with open(os.path.join(DATA_DIR, file), "r", encoding="utf-8") as f:
             documents.append(f.read())
+            doc_names.append(file)
 
 # ===============================
-# EMBEDDINGS + FAISS
+# TF-IDF VECTOR STORE (NO TORCH)
 # ===============================
-embedder = SentenceTransformer("all-MiniLM-L6-v2")
-doc_embeddings = embedder.encode(documents)
-
-index = faiss.IndexFlatL2(doc_embeddings.shape[1])
-index.add(np.array(doc_embeddings))
+vectorizer = TfidfVectorizer(stop_words="english")
+doc_vectors = vectorizer.fit_transform(documents)
 
 def retrieve_context(query, k=2):
-    q_emb = embedder.encode([query])
-    _, idx = index.search(np.array(q_emb), k)
-    return "\n".join([documents[i] for i in idx[0]])
+    query_vec = vectorizer.transform([query])
+    similarities = cosine_similarity(query_vec, doc_vectors)[0]
+    top_indices = similarities.argsort()[-k:][::-1]
+    return "\n".join([documents[i] for i in top_indices])
 
 # ===============================
-# LOAD LLM
+# LOAD LLM (FREE)
 # ===============================
 llm = pipeline(
     "text2text-generation",
@@ -66,7 +78,11 @@ def load_data(selected_file):
 # ===============================
 def prepare_features(df):
     df = df.copy()
-    df["SectorTotal"] = df["Sector1Time"] + df["Sector2Time"] + df["Sector3Time"]
+
+    df["SectorTotal"] = (
+        df["Sector1Time"] + df["Sector2Time"] + df["Sector3Time"]
+    )
+
     df["LapTimeDelta"] = df.groupby("Driver")["LapTime"].diff()
 
     threshold = df["LapTime"].mean() + 3 * df["LapTime"].std()
@@ -74,92 +90,119 @@ def prepare_features(df):
 
     df["Stint"] = df.groupby("Driver")["IsPitStop"].cumsum() + 1
     df["DegradationRate"] = df["LapTimeDelta"] / df["TyreLife"]
+
     return df
 
 # ===============================
 # SUSTAINABILITY SCORE
 # ===============================
 def calculate_sustainability_score(df, driver):
-    d = df[df["Driver"] == driver]
+    d = df[df["Driver"] == driver].copy()
 
     stint_lengths = d.groupby("Stint")["LapNumber"].count()
-    avg_stint = stint_lengths.mean()
+    avg_stint_length = stint_lengths.mean()
 
-    degr = d["DegradationRate"].replace([np.inf, -np.inf], np.nan).dropna()
-    degr_mean = degr.mean() if len(degr) else 0
+    valid_degradation = (
+        d["DegradationRate"]
+        .replace([np.inf, -np.inf], np.nan)
+        .dropna()
+    )
+    degr_rate_mean = valid_degradation.mean() if len(valid_degradation) else 0
 
+    avg_lap_time = d["LapTime"].mean()
     pit_laps = d[d["IsPitStop"]]["LapTime"]
-    pit_loss = (pit_laps - d["LapTime"].mean()).mean() if len(pit_laps) else 0
+    pit_loss = (pit_laps - avg_lap_time).mean() if len(pit_laps) else 0
 
-    score = (avg_stint / abs(degr_mean)) - pit_loss if degr_mean != 0 else 0
+    score = (
+        (avg_stint_length / abs(degr_rate_mean)) - pit_loss
+        if degr_rate_mean != 0
+        else 0
+    )
 
-    return avg_stint, degr_mean, score
+    return {
+        "AvgStintLength": avg_stint_length,
+        "DegradationRate": degr_rate_mean,
+        "SustainabilityScore": score
+    }
 
 # ===============================
-# UI
+# SIDEBAR – RACE & DRIVER SELECTION
 # ===============================
-st.set_page_config(layout="wide")
-st.title("🏎️🌱 ESG F1 Copilot")
+st.sidebar.header("🏁 Race Selection")
 
-# Sidebar
-st.sidebar.header("Race Selection")
 selected_race_name = st.sidebar.selectbox("Select Race", race_names)
-selected_file = race_files[race_names.index(selected_race_name)]
+selected_race_file = race_files[race_names.index(selected_race_name)]
 
-df = prepare_features(load_data(selected_file))
+df_raw = load_data(selected_race_file)
+df = prepare_features(df_raw)
 
 drivers = sorted(df["Driver"].unique())
-d1 = st.sidebar.selectbox("Driver 1", drivers)
-d2 = st.sidebar.selectbox("Driver 2", drivers, index=1)
+
+st.sidebar.header("👤 Driver Selection")
+driver1 = st.sidebar.selectbox("Driver 1", drivers)
+driver2 = st.sidebar.selectbox("Driver 2", drivers, index=1)
 
 # ===============================
-# DASHBOARD (UNCHANGED CORE)
+# DASHBOARD
 # ===============================
-st.subheader("Sustainability Score Comparison")
+st.subheader(f"Sustainability Performance — {selected_race_name}")
 
-s1 = calculate_sustainability_score(df, d1)
-s2 = calculate_sustainability_score(df, d2)
+score1 = calculate_sustainability_score(df, driver1)
+score2 = calculate_sustainability_score(df, driver2)
 
-score_df = pd.DataFrame({
-    "Driver": [d1, d2],
-    "Avg Stint Length": [s1[0], s2[0]],
-    "Degradation Rate": [s1[1], s2[1]],
-    "Sustainability Score": [s1[2], s2[2]]
-})
+score_df = pd.DataFrame([
+    {"Driver": driver1, **score1},
+    {"Driver": driver2, **score2}
+])
 
-st.dataframe(score_df)
+st.dataframe(score_df, use_container_width=True)
+
+fig, ax = plt.subplots(figsize=(6, 4))
+ax.bar(score_df["Driver"], score_df["SustainabilityScore"])
+ax.set_title("Sustainability Score Comparison")
+ax.set_ylabel("Score")
+ax.grid(axis="y", linestyle="--")
+
+st.pyplot(fig)
 
 # ===============================
 # BUILD RACE SUMMARY FOR LLM
 # ===============================
 race_summary = f"""
-In the {selected_race_name},
-{d1} had an average stint length of {round(s1[0],2)} laps
-with an average degradation rate of {round(s1[1],4)}.
+Race: {selected_race_name}
 
-{d2} had an average stint length of {round(s2[0],2)} laps
-with an average degradation rate of {round(s2[1],4)}.
+{driver1}:
+- Average stint length: {round(score1['AvgStintLength'], 2)} laps
+- Average degradation rate: {round(score1['DegradationRate'], 4)}
+- Sustainability score: {round(score1['SustainabilityScore'], 2)}
+
+{driver2}:
+- Average stint length: {round(score2['AvgStintLength'], 2)} laps
+- Average degradation rate: {round(score2['DegradationRate'], 4)}
+- Sustainability score: {round(score2['SustainabilityScore'], 2)}
 
 Higher stint length and lower degradation indicate better
 resource efficiency and reduced operational waste.
 """
 
 # ===============================
-# CHATBOT
+# ESG CHATBOT
 # ===============================
 st.subheader("💬 Ask the ESG Copilot")
 
-if "chat" not in st.session_state:
-    st.session_state.chat = []
+if "chat_history" not in st.session_state:
+    st.session_state.chat_history = []
 
-question = st.chat_input("Ask about ESG, sustainability, or performance insights")
+user_question = st.chat_input(
+    "Ask about ESG, sustainability, or what this race teaches companies"
+)
 
-if question:
-    esg_context = retrieve_context(question)
+if user_question:
+    esg_context = retrieve_context(user_question)
 
     prompt = f"""
 You are a corporate ESG sustainability assistant.
-Use Formula 1 data as an analogy for business operations.
+Use Formula 1 data as an analogy for high-performance organizations.
 
 ESG Knowledge:
 {esg_context}
@@ -168,24 +211,28 @@ Race Context:
 {race_summary}
 
 Question:
-{question}
+{user_question}
 
 Answer with:
-- Explanation
-- Business relevance
-- ESG takeaway
+1. Clear explanation
+2. Business relevance
+3. ESG takeaway
 """
 
-    answer = llm(prompt)[0]["generated_text"]
-    st.session_state.chat.append((question, answer))
+    response = llm(prompt)[0]["generated_text"]
 
-for q, a in st.session_state.chat:
-    with st.chat_message("user"):
-        st.write(q)
-    with st.chat_message("assistant"):
-        st.write(a)
+    st.session_state.chat_history.append(("user", user_question))
+    st.session_state.chat_history.append(("assistant", response))
+
+for role, message in st.session_state.chat_history:
+    with st.chat_message(role):
+        st.write(message)
 
 # ===============================
 # FOOTER
 # ===============================
-st.caption("Demonstration project using F1 data as a sustainability case study.")
+st.markdown("---")
+st.caption(
+    "This project uses Formula 1 data as a sustainability case study. "
+    "All ESG insights are for demonstration purposes only."
+)
