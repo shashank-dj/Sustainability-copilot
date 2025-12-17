@@ -1,0 +1,15 @@
+Formula 1 sustainability metrics can be mapped to corporate ESG concepts.
+
+Tyre degradation reflects resource consumption efficiency.
+Lower degradation indicates better use of materials over time.
+
+Longer tyre stints reduce the number of tyres required,
+which lowers material usage, logistics operations, and waste generation.
+
+Pit stop strategies represent operational interventions.
+Fewer or optimized pit stops mirror lean operational practices
+in manufacturing and industrial environments.
+
+The Sustainability Performance Score in the dashboard represents
+how well performance is achieved while minimizing resource use.
+This concept is transferable to corporate sustainability KPIs.
