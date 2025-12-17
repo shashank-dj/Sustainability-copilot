@@ -5,3 +5,7 @@ faiss-cpu
 torch
 pandas
 plotly
+pandas
+matplotlib
+numpy
+seaborn
