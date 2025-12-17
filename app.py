@@ -29,16 +29,14 @@ DATA_DIR = "data"
 # LOAD ESG KNOWLEDGE FILES
 # ===============================
 documents = []
-doc_names = []
 
 for file in os.listdir(DATA_DIR):
     if file.endswith(".txt"):
         with open(os.path.join(DATA_DIR, file), "r", encoding="utf-8") as f:
             documents.append(f.read())
-            doc_names.append(file)
 
 # ===============================
-# TF-IDF VECTOR STORE (NO TORCH)
+# TF-IDF VECTOR STORE
 # ===============================
 vectorizer = TfidfVectorizer(stop_words="english")
 doc_vectors = vectorizer.fit_transform(documents)
@@ -50,7 +48,7 @@ def retrieve_context(query, k=2):
     return "\n".join([documents[i] for i in top_indices])
 
 # ===============================
-# LOAD LLM (FREE)
+# LOAD LLM (STABLE)
 # ===============================
 llm = pipeline(
     "text2text-generation",
@@ -171,22 +169,18 @@ st.pyplot(fig)
 race_summary = f"""
 Race: {selected_race_name}
 
-{driver1}:
-- Average stint length: {round(score1['AvgStintLength'], 2)} laps
-- Average degradation rate: {round(score1['DegradationRate'], 4)}
-- Sustainability score: {round(score1['SustainabilityScore'], 2)}
+{driver1} achieved an average stint length of {round(score1['AvgStintLength'], 2)} laps
+with an average tyre degradation rate of {round(score1['DegradationRate'], 4)}.
 
-{driver2}:
-- Average stint length: {round(score2['AvgStintLength'], 2)} laps
-- Average degradation rate: {round(score2['DegradationRate'], 4)}
-- Sustainability score: {round(score2['SustainabilityScore'], 2)}
+{driver2} achieved an average stint length of {round(score2['AvgStintLength'], 2)} laps
+with an average tyre degradation rate of {round(score2['DegradationRate'], 4)}.
 
-Higher stint length and lower degradation indicate better
-resource efficiency and reduced operational waste.
+Longer stints and lower degradation indicate better resource efficiency
+and fewer operational interventions.
 """
 
 # ===============================
-# ESG CHATBOT
+# ESG CHATBOT (FIXED PROMPT)
 # ===============================
 st.subheader("💬 Ask the ESG Copilot")
 
@@ -202,7 +196,11 @@ if user_question:
 
     prompt = f"""
 You are a corporate ESG sustainability assistant.
-Use Formula 1 data as an analogy for high-performance organizations.
+Explain concepts clearly and practically for business users.
+
+Use the information below to answer the question.
+Do not use numbering or bullet points unless necessary.
+If the question is simple, give a simple explanation.
 
 ESG Knowledge:
 {esg_context}
@@ -213,13 +211,10 @@ Race Context:
 Question:
 {user_question}
 
-Answer with:
-1. Clear explanation
-2. Business relevance
-3. ESG takeaway
+Answer:
 """
 
-    response = llm(prompt)[0]["generated_text"]
+    response = llm(prompt)[0]["generated_text"].strip()
 
     st.session_state.chat_history.append(("user", user_question))
     st.session_state.chat_history.append(("assistant", response))
